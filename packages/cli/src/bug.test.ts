@@ -34,10 +34,9 @@ describe("kollaudo bug", () => {
       [
         "bug",
         "link",
+        "SHOP-412",
         "--component",
         "checkout",
-        "--key",
-        "SHOP-412",
         "--url",
         "https://example.atlassian.net/browse/SHOP-412",
         "--test",
@@ -48,7 +47,14 @@ describe("kollaudo bug", () => {
       { env, fetch },
     );
 
-    expect(result).toEqual({ code: 0, out: "Linked SHOP-412 in checkout: open\n", err: "" });
+    expect(result).toEqual({
+      code: 0,
+      out:
+        "Linked SHOP-412 in checkout: open\n" +
+        "  checkout › pays with a saved card\n" +
+        "  checkout › pays with a gift card\n",
+      err: "",
+    });
     const [{ url, init }] = requests as [(typeof requests)[number]];
     expect(url).toBe("https://kollaudo.example.com/v1/bugs");
     expect(init.method).toBe("POST");
@@ -64,7 +70,11 @@ describe("kollaudo bug", () => {
   it("requires component, key, url and at least one test to link", async () => {
     const result = await runWith(run, ["bug", "link", "--component", "checkout"], { env });
     expect(result.code).toBe(1);
-    expect(result.err).toMatch(/^Missing --key, --url, --test\./);
+    expect(result.err).toMatch(/^Missing <key>, --url, --test\./);
+
+    const withKey = await runWith(run, ["bug", "link", "SHOP-412"], { env });
+    expect(withKey.code).toBe(1);
+    expect(withKey.err).toMatch(/^Missing --component, --url, --test\./);
   });
 
   it("closes every link of a bug in a component", async () => {
@@ -74,10 +84,9 @@ describe("kollaudo bug", () => {
       [
         "bug",
         "close",
+        "SHOP-412",
         "--component",
         "checkout",
-        "--key",
-        "SHOP-412",
         "--url",
         "https://example.atlassian.net/browse/SHOP-412",
       ],
@@ -95,16 +104,21 @@ describe("kollaudo bug", () => {
     });
   });
 
+  it("requires component, key and url to close", async () => {
+    const result = await runWith(run, ["bug", "close", "--component", "checkout"], { env });
+    expect(result.code).toBe(1);
+    expect(result.err).toMatch(/^Missing <key>, --url\./);
+  });
+
   it("needs an ingest token to link or close", async () => {
     const noToken = await runWith(
       run,
       [
         "bug",
         "link",
+        "SHOP-412",
         "--component",
         "checkout",
-        "--key",
-        "SHOP-412",
         "--url",
         "https://example.atlassian.net/browse/SHOP-412",
         "--test",
@@ -180,6 +194,46 @@ describe("kollaudo bug", () => {
     expect(requests).toEqual(["https://kollaudo.example.com/v1/bugs?component=checkout"]);
   });
 
+  it("prints the link and close API's answer unchanged with --json", async () => {
+    const text = JSON.stringify(given);
+    const linkFetch = async () => new Response(text);
+    const linked = await runWith(
+      run,
+      [
+        "bug",
+        "link",
+        "SHOP-412",
+        "--component",
+        "checkout",
+        "--url",
+        "https://example.atlassian.net/browse/SHOP-412",
+        "--test",
+        "checkout › pays with a saved card",
+        "--json",
+      ],
+      { env, fetch: linkFetch as typeof globalThis.fetch },
+    );
+    expect(linked).toEqual({ code: 0, out: `${text}\n`, err: "" });
+
+    const closedText = JSON.stringify({ ...given, state: "closed", tests: [] });
+    const closeFetch = async () => new Response(closedText);
+    const closed = await runWith(
+      run,
+      [
+        "bug",
+        "close",
+        "SHOP-412",
+        "--component",
+        "checkout",
+        "--url",
+        "https://example.atlassian.net/browse/SHOP-412",
+        "--json",
+      ],
+      { env, fetch: closeFetch as typeof globalThis.fetch },
+    );
+    expect(closed).toEqual({ code: 0, out: `${closedText}\n`, err: "" });
+  });
+
   it("prints an empty answer as JSON too, not as prose", async () => {
     const body = { items: [] };
     const { fetch } = server(200, body);
@@ -239,6 +293,10 @@ describe("kollaudo bug", () => {
     const unknown = await runWith(run, ["bug", "foo"], { env: readEnv });
     expect(unknown.code).toBe(1);
     expect(unknown.err).toMatch(/^Unknown use of "kollaudo bug"\./);
+
+    const extra = await runWith(run, ["bug", "list", "SHOP-412"], { env: readEnv });
+    expect(extra.code).toBe(1);
+    expect(extra.err).toMatch(/^Unknown use of "kollaudo bug"\./);
 
     const { requests, fetch } = server(200, { items: [] });
     const invalid = await runWith(run, ["bug", "list", "--tool", "helm"], { env: readEnv, fetch });

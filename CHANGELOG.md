@@ -15,8 +15,8 @@ the API.
   `--version` and `--kind` filter them, and `--json` prints the API's answer as it is. A `read` or
   `signoff` token can list them.
 - `kollaudo bug link`, `bug close` and `bug list` link a failed test to a known bug, close it, or
-  list the bugs with their tests. `link` and `close` need an `ingest` token; `list` accepts a `read`
-  or `ingest` token and `--component`, `--key`, `--state` and `--json`.
+  list the bugs with their tests. `link` and `close` need an `ingest` token; all three accept
+  `--json`. `list` accepts a `read` or `ingest` token and `--component`, `--key` and `--state` filters.
 
 ### Server
 

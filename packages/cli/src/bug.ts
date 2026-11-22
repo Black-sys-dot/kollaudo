@@ -3,8 +3,8 @@ import type { Bug, BugInput, BugList } from "@kollaudo/schema";
 import { call, describeError, server } from "./api.ts";
 import type { Io } from "./io.ts";
 
-export const BUG_HELP = `Usage: kollaudo bug link --component <name> --key <key> --url <url> --test <name> [--test <name> ...]
-       kollaudo bug close --component <name> --key <key> --url <url>
+export const BUG_HELP = `Usage: kollaudo bug link <key> --component <name> --url <url> --test <name> [--test <name> ...] [--json]
+       kollaudo bug close <key> --component <name> --url <url> [--json]
        kollaudo bug list [--component <name>] [--key <key>] [--state <state>] [--json]
 
 Link a failed test to a known bug in your tracker, close it, or list the bugs, so that a verdict
@@ -18,13 +18,12 @@ Commands:
 
 Options:
   --component <name>     Component, such as "checkout" (required for link and close)
-  --key <key>            Key of the bug in the tracker, such as "SHOP-412" (required for link
-                         and close, and a filter for list)
+  --key <key>            Key of the bug in the tracker, such as "SHOP-412" (a filter for list)
   --url <url>            Address of the bug, such as "https://..." (required for link and close)
   --test <name>          A test that fails because of the bug, named as the report shows it: the
                          suite and the name, joined by " › ". Give it once per test (link only)
   --state <state>        With list: only open or closed
-  --json                 With list: print the API's answer as JSON instead of the one-line format
+  --json                 Print the API's answer as JSON instead of the formatted output
   -h, --help             Show this help
 
 Environment:
@@ -33,7 +32,7 @@ Environment:
                   A read or ingest token can list the bugs too
 
 Example:
-  kollaudo bug link --component checkout --key SHOP-412 \\
+  kollaudo bug link SHOP-412 --component checkout \\
     --url https://example.atlassian.net/browse/SHOP-412 \\
     --test "checkout › pays with a saved card"
 `;
@@ -54,26 +53,31 @@ export async function bug(args: string[], io: Io): Promise<number> {
     return 0;
   }
 
-  const [action, ...rest] = positionals;
-  if (action === "list" && rest.length === 0) return list(values, io);
-  if (action === "link" && rest.length === 0) return link(values, io);
-  if (action === "close" && rest.length === 0) return close(values, io);
+  const [action, key, ...rest] = positionals;
+  if (action === "list" && !key && rest.length === 0) return list(values, io);
+  if (action === "link" && rest.length === 0) return link(key, values, io);
+  if (action === "close" && rest.length === 0) return close(key, values, io);
 
   io.err(`Unknown use of "kollaudo bug".\n\n${BUG_HELP}`);
   return 1;
 }
 
-async function link(values: ReturnType<typeof parse>["values"], io: Io): Promise<number> {
+async function link(
+  key: string | undefined,
+  values: ReturnType<typeof parse>["values"],
+  io: Io,
+): Promise<number> {
   const fail = (message: string) => {
     io.err(`Error: ${message}\n`);
     return 1;
   };
-  const missing = (["component", "key", "url"] as const).filter((name) => !values[name]);
-  const tests = values.test;
-  if (missing.length > 0 || !tests || tests.length === 0) {
-    const names = missing.map((m) => `--${m}`);
-    if (!tests || tests.length === 0) names.push("--test");
-    io.err(`Missing ${names.join(", ")}.\n\n${BUG_HELP}`);
+  const missing: string[] = [];
+  if (!key) missing.push("<key>");
+  if (!values.component) missing.push("--component");
+  if (!values.url) missing.push("--url");
+  if (!values.test || values.test.length === 0) missing.push("--test");
+  if (missing.length > 0) {
+    io.err(`Missing ${missing.join(", ")}.\n\n${BUG_HELP}`);
     return 1;
   }
 
@@ -82,9 +86,9 @@ async function link(values: ReturnType<typeof parse>["values"], io: Io): Promise
 
   const body = JSON.stringify({
     component: values.component as string,
-    key: values.key as string,
+    key: key as string,
     url: values.url as string,
-    tests,
+    tests: values.test as string[],
   } satisfies BugInput);
 
   let answer: Awaited<ReturnType<typeof call>>;
@@ -100,19 +104,32 @@ async function link(values: ReturnType<typeof parse>["values"], io: Io): Promise
   const { response, text } = answer;
   if (!response.ok) return fail(describeError(response, text));
 
+  if (values.json) {
+    io.out(`${text}\n`);
+    return 0;
+  }
+
   const saved = JSON.parse(text) as Bug;
   io.out(`Linked ${saved.key} in ${saved.component}: ${saved.state}\n`);
+  for (const test of saved.tests) io.out(`  ${test}\n`);
   return 0;
 }
 
-async function close(values: ReturnType<typeof parse>["values"], io: Io): Promise<number> {
+async function close(
+  key: string | undefined,
+  values: ReturnType<typeof parse>["values"],
+  io: Io,
+): Promise<number> {
   const fail = (message: string) => {
     io.err(`Error: ${message}\n`);
     return 1;
   };
-  const missing = (["component", "key", "url"] as const).filter((name) => !values[name]);
+  const missing: string[] = [];
+  if (!key) missing.push("<key>");
+  if (!values.component) missing.push("--component");
+  if (!values.url) missing.push("--url");
   if (missing.length > 0) {
-    io.err(`Missing ${missing.map((m) => `--${m}`).join(", ")}.\n\n${BUG_HELP}`);
+    io.err(`Missing ${missing.join(", ")}.\n\n${BUG_HELP}`);
     return 1;
   }
 
@@ -121,7 +138,7 @@ async function close(values: ReturnType<typeof parse>["values"], io: Io): Promis
 
   const body = JSON.stringify({
     component: values.component as string,
-    key: values.key as string,
+    key: key as string,
     url: values.url as string,
     state: "closed",
   } satisfies BugInput);
@@ -138,6 +155,11 @@ async function close(values: ReturnType<typeof parse>["values"], io: Io): Promis
   }
   const { response, text } = answer;
   if (!response.ok) return fail(describeError(response, text));
+
+  if (values.json) {
+    io.out(`${text}\n`);
+    return 0;
+  }
 
   const saved = JSON.parse(text) as Bug;
   io.out(`Closed ${saved.key} in ${saved.component}\n`);
